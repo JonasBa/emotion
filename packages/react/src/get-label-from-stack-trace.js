@@ -3,8 +3,22 @@
 const getLastPart = (functionName: string): string => {
   // The match may be something like 'Object.createEmotionProps' or
   // 'Loader.prototype.render'
-  const parts = functionName.split('.')
-  return parts[parts.length - 1]
+  let chars = functionName.length
+  // If it is empty, do nothing
+  if (chars === 0) return ''
+  // if it is a single character, it cannot contain a dot
+  if (chars === 1) return functionName
+  // if it is three characters, it can only contain a dot in the middle
+  if (chars === 3 && functionName[1] === '.') {
+    return functionName[2]
+  }
+
+  // The ending cannot be a dot, so we can start from penultimate character
+  let charptr = chars - 2
+  while (functionName[charptr] !== '.' && charptr >= 0) {
+    charptr--
+  }
+  return functionName.slice(charptr + 1)
 }
 
 const getFunctionNameFromStackTraceLine = (line: string): ?string => {

@@ -1,38 +1,5 @@
 // @flow
 
-const getLastPart = (functionName: string): string => {
-  // The match may be something like 'Object.createEmotionProps' or
-  // 'Loader.prototype.render'
-  let chars = functionName.length
-  // If it is empty, do nothing
-  if (chars === 0) return ''
-  // if it is a single character, it cannot contain a dot
-  if (chars === 1) return functionName
-  // if it is three characters, it can only contain a dot in the middle
-  if (chars === 3 && functionName[1] === '.') {
-    return functionName[2]
-  }
-
-  // The ending cannot be a dot, so we can start from penultimate character
-  let charptr = chars - 2
-  while (functionName[charptr] !== '.' && charptr >= 0) {
-    charptr--
-  }
-  return functionName.slice(charptr + 1)
-}
-
-const getFunctionNameFromStackTraceLine = (line: string): ?string => {
-  // V8
-  let match = /^\s+at\s+([A-Za-z0-9$.]+)\s/.exec(line)
-  if (match) return getLastPart(match[1])
-
-  // Safari / Firefox
-  match = /^([A-Za-z0-9$.]+)@/.exec(line)
-  if (match) return getLastPart(match[1])
-
-  return undefined
-}
-
 const internalReactFunctionNames = /* #__PURE__ */ new Set([
   'renderWithHooks',
   'processChild',
@@ -40,29 +7,79 @@ const internalReactFunctionNames = /* #__PURE__ */ new Set([
   'renderToString'
 ])
 
-// These identifiers come from error stacks, so they have to be valid JS
-// identifiers, thus we only need to replace what is a valid character for JS,
-// but not for CSS.
-const sanitizeIdentifier = (identifier: string) =>
-  identifier.replace(/\$/g, '-')
-
-export const getLabelFromStackTrace = (stackTrace: string): ?string => {
+export const getLabelFromStackTrace = stackTrace => {
   if (!stackTrace) return undefined
 
-  const lines = stackTrace.split('\n')
+  let linestart = 0
+  let charptr = 0
+  let end = stackTrace.length
+  let line = 1
 
-  for (let i = 0; i < lines.length; i++) {
-    const functionName = getFunctionNameFromStackTraceLine(lines[i])
+  // Skip the first line
+  while (stackTrace[charptr] !== '\n') {
+    charptr++
+  }
 
-    // The first line of V8 stack traces is just "Error"
-    if (!functionName) continue
+  // Move to next line and set start
+  charptr++
+  linestart = charptr
 
-    // If we reach one of these, we have gone too far and should quit
-    if (internalReactFunctionNames.has(functionName)) break
+  while (charptr < end) {
+    if (charptr === linestart) {
+      // Skip spaces and 'at '
+      while (
+        stackTrace[charptr] === ' ' ||
+        (stackTrace[charptr] === 'a' &&
+          stackTrace[charptr + 1] === 't' &&
+          stackTrace[charptr + 2] === ' ')
+      ) {
+        charptr = stackTrace[charptr] === ' ' ? charptr + 1 : charptr + 3
+      }
+      // move line start to pointer
+      linestart = charptr
+    }
 
-    // The component name is the first function in the stack that starts with an
-    // uppercase letter
-    if (/^[A-Z]/.test(functionName)) return sanitizeIdentifier(functionName)
+    switch (stackTrace[charptr]) {
+      case '.': {
+        // We want to infer only the last component of the function name
+        // Example: Object.createEmotionProps -> createEmotionProps so
+        // when we encounter a dot, we skip the previous part of the name
+        // and move linestart to the next character
+        linestart = ++charptr
+        break
+      }
+      case '(':
+      case ' ':
+      case '@':
+      case '\n': {
+        // Our label has to start with an uppercase letter, skip everything else
+        // note: unicode uppercase letters are technically valid JS identifiers,
+        // but we will ignore them for simplicity sake.
+        const firstCharCode = stackTrace.charCodeAt(linestart)
+        if (firstCharCode < 65 || firstCharCode > 90) {
+          while (charptr < end && stackTrace[charptr] !== '\n') {
+            charptr++
+          }
+          line++
+          linestart = ++charptr
+          break
+        }
+
+        const functionName = stackTrace.slice(linestart, charptr)
+        if (internalReactFunctionNames.has(functionName)) {
+          charptr++
+          break
+        }
+
+        // These identifiers come from error stacks, so they have to be valid JS
+        // identifiers, thus we only need to replace what is a valid character for JS,
+        // but not for CSS.
+        return functionName.replace(/\$/g, '-')
+      }
+      default: {
+        charptr++
+      }
+    }
   }
 
   return undefined
